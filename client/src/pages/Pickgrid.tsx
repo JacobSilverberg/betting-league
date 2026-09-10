@@ -14,13 +14,23 @@ const C = {
 const FF = "'Barlow Condensed', sans-serif";
 const FFb = "'Barlow', sans-serif";
 
+// Result encoding is redundant on purpose — background colour AND a glyph — so
+// the grid stays readable for red/green colour blindness.
 const pickStyle = (status: string): React.CSSProperties => {
-  if (status === 'winner') return { background: 'rgba(16,185,129,0.15)', color: C.grn, border: '1px solid rgba(16,185,129,0.3)' };
-  if (status === 'loser') return { background: 'rgba(239,68,68,0.12)', color: C.red, border: '1px solid rgba(239,68,68,0.25)' };
-  if (status === 'push') return { background: 'rgba(245,158,11,0.12)', color: C.amb, border: '1px solid rgba(245,158,11,0.25)' };
+  if (status === 'winner') return { background: 'rgba(16,185,129,0.28)', color: '#34d399', border: '1px solid rgba(16,185,129,0.6)' };
+  if (status === 'loser') return { background: 'rgba(239,68,68,0.22)', color: '#f87171', border: '1px solid rgba(239,68,68,0.55)' };
+  if (status === 'push') return { background: 'rgba(245,158,11,0.22)', color: '#fbbf24', border: '1px solid rgba(245,158,11,0.55)' };
   if (status === 'game-started') return { background: C.d2, color: C.txt, border: `1px solid ${C.bor}` };
   return { color: C.bor };
 };
+
+const STATUS_META: Record<string, { glyph: string; label: string }> = {
+  winner: { glyph: '✓', label: 'Won' },
+  loser: { glyph: '✕', label: 'Lost' },
+  push: { glyph: '=', label: 'Push' },
+};
+
+const RESULT_STATUSES = ['winner', 'loser', 'push'] as const;
 
 const Pickgrid = () => {
   const { leagueId } = useParams<{ leagueId: string }>();
@@ -86,10 +96,12 @@ const Pickgrid = () => {
       .filter((s) => weekGames[s.game_id])
       .map((pick) => {
         const game = weekGames[pick.game_id];
-        if (!game || game.game_started === 0) return { status: 'pending', content: '—' };
+        // Truthiness rather than === 0 / === 1 so the pick-hiding and result
+        // logic survives the DB driver returning booleans or strings.
+        if (!game || !game.game_started) return { status: 'pending', content: '—' };
 
         let status = 'game-started';
-        if (game.game_completed === 1) {
+        if (game.game_completed) {
           const isHome = game.home_team_id === pick.team_id;
           const isAway = game.away_team_id === pick.team_id;
           if (game.spread_winner === 'home') status = isHome ? 'winner' : 'loser';
@@ -129,11 +141,25 @@ const Pickgrid = () => {
         <div style={{ fontSize: 28, fontWeight: 900, color: '#fff', textTransform: 'uppercase', letterSpacing: -0.5, position: 'relative', zIndex: 1 }}>Pick Grid</div>
       </div>
 
-      {/* Scroll controls — useful on desktop where there's no swipe */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '6px 14px', background: C.card, borderBottom: `1px solid ${C.bor}`, gap: 6 }}>
-        <span style={{ fontFamily: FFb, fontSize: 11, color: C.mut, marginRight: 'auto', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-          Scroll
-        </span>
+      {/* Result legend + scroll controls (arrows help on desktop where there's no swipe) */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '6px 14px', background: C.card, borderBottom: `1px solid ${C.bor}`, gap: 6, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginRight: 'auto', flexWrap: 'wrap' }}>
+          {RESULT_STATUSES.map((s) => (
+            <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                width: 17, height: 17, borderRadius: 4, flexShrink: 0,
+                fontFamily: FF, fontSize: 11, fontWeight: 900, lineHeight: 1,
+                ...pickStyle(s),
+              }}>
+                {STATUS_META[s].glyph}
+              </span>
+              <span style={{ fontFamily: FFb, fontSize: 10, color: C.mut, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                {STATUS_META[s].label}
+              </span>
+            </span>
+          ))}
+        </div>
         <button
           onClick={() => scrollGrid(-1)}
           aria-label="Scroll grid left"
@@ -199,11 +225,30 @@ const Pickgrid = () => {
                       return (
                         <td key={i + 1} className="pg-week" style={{ padding: '5px', verticalAlign: 'top', background: isMe ? 'rgba(26,45,74,0.3)' : 'transparent' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                            {wkPicks.length > 0 ? wkPicks.map((pick, idx) => (
-                              <div key={idx} style={{ padding: '3px 6px', borderRadius: 5, fontFamily: FF, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3, ...pickStyle(pick.status) }}>
-                                {pick.content}
-                              </div>
-                            )) : (
+                            {wkPicks.length > 0 ? wkPicks.map((pick, idx) => {
+                              const meta = STATUS_META[pick.status];
+                              return (
+                                <div
+                                  key={idx}
+                                  title={meta ? `${pick.content} — ${meta.label}` : pick.content}
+                                  style={{
+                                    padding: '3px 6px', borderRadius: 5, fontFamily: FF, fontSize: 11,
+                                    fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4,
+                                    ...pickStyle(pick.status),
+                                  }}
+                                >
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {pick.content}
+                                  </span>
+                                  {meta && (
+                                    <span aria-label={meta.label} style={{ flexShrink: 0, fontSize: 12, fontWeight: 900, lineHeight: 1 }}>
+                                      {meta.glyph}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            }) : (
                               <div style={{ padding: '3px 6px', color: C.bor, fontFamily: FF, fontSize: 12 }}>—</div>
                             )}
                           </div>
